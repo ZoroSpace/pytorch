@@ -29,6 +29,7 @@
 #include <torch/csrc/distributed/rpc/py_rref.h>
 #include <torch/csrc/distributed/rpc/rref_impl.h>
 #endif
+#include <torch/library.h>
 
 #include <ATen/core/function_schema.h>
 #include <c10/core/Stream.h>
@@ -55,6 +56,11 @@
 
 namespace torch {
 namespace jit {
+
+struct python_args {
+  const struct tuple_slice& args;
+  const pybind11::kwargs& kwargs;
+};
 
 void clear_registered_instances(void* ptr);
 
@@ -1067,6 +1073,24 @@ inline py::object invokeScriptMethodFromPython(
       [&](Graph& graph, const MatchedSchema& match) {
         return graph.insertMethodCall(callee.name(), match);
       });
+}
+
+inline c10::optional<Method> Method::matchOverloadedMethods(
+    const struct python_args& args) {
+  auto methods = owner().get_overloaded_methods(name());
+  for (auto method : methods) {
+    try {
+      createStackForSchema(
+          method.function().getSchema(),
+          args.args,
+          args.kwargs,
+          owner()._ivalue());
+      return method;
+    } catch (schema_match_error& error) {
+      continue;
+    }
+  }
+  return c10::nullopt;
 }
 
 inline std::pair<std::shared_ptr<Operator>, Stack> getOpWithStack(
